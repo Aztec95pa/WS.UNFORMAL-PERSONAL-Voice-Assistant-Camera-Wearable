@@ -7,6 +7,7 @@ from PIL import Image, ImageTk
 import io
 import json
 import datetime
+from image_receiver import ImageReceiver, InvalidImage, decode_jpeg
 
 # -----------Speech to Text
 from vosk import Model, KaldiRecognizer
@@ -61,8 +62,6 @@ class BLEApp:
     def __init__(self, master):
         self.speakingStatus = False
         self.rag = True
-        self.img_byte_array = bytearray()
-        self.prev_img_byte_array = bytearray()
          
         self.master = master
         self.master.title("BLE Device Selector")
@@ -143,7 +142,8 @@ class BLEApp:
         threading.Thread(target=asyncio.run, args=(self.connect_to_device(selected_address),), daemon=True).start()
 
     async def connect_to_device(self, address):
-        async with BleakClient(address) as client:
+        image_receiver = ImageReceiver()
+        async with BleakClient(address, disconnected_callback=lambda _: image_receiver.reset()) as client:
             if client.is_connected:
                 
                 self.connect_button.destroy()
@@ -153,17 +153,21 @@ class BLEApp:
                 img_frame = tk.Frame(self.master)
                 img_frame.pack()
 
-                self.img_byte_array = bytearray()
                 def img_notification_handler(sender, data):
-                    if(data == b'\xff\xff'):
+                    encoded_image = image_receiver.feed(data)
+                    if encoded_image is not None:
+                        try:
+                            image = decode_jpeg(encoded_image)
+                        except InvalidImage:
+                            print("Discarded invalid BLE image")
+                            return
                         print("packet end")
                         delta = datetime.datetime.now() - datetime.datetime(1900, 1, 1)
                         img_name = int(delta.total_seconds())
-                        image = Image.open(io.BytesIO(self.img_byte_array))
                         image = image.rotate(-90, expand=True)
 
                         formatted_prompt = f"Thoroughly describe the image in detail. Include any objects and any text you see in the image in your answer"
-                        description = moondream_pipeline(io.BytesIO(self.img_byte_array), formatted_prompt)
+                        description = moondream_pipeline(io.BytesIO(encoded_image), formatted_prompt)
                         image_df.loc[len(image_df)] = [str(img_name), str(description)]
                         vectorstore.add_documents([Document(page_content=("Image Description: " + str(description) + " File Name: " + str(img_name)))])
                         image.save("./Pictures/" + str(img_name) + ".jpg", "JPEG")
@@ -175,15 +179,6 @@ class BLEApp:
                         label.image = photo
                         label.grid(row=0, column=1)
 
-                        self.prev_img_byte_array = self.img_byte_array
-                        self.img_byte_array = bytearray()
-                    else:
-                        packet_id = int.from_bytes(data[0:2], byteorder='little')
-                        if(packet_id == 0):
-                            self.img_byte_array = bytearray()
-                        self.img_byte_array += data[2:] #remove packetID
-                        print(packet_id)
-                
                 # Subscribe to notifications
                 await client.start_notify(PHOTO_UUID, img_notification_handler)
                 print(f"Subscribed to {PHOTO_UUID}")
@@ -209,7 +204,7 @@ class BLEApp:
                 print(f"Subscribed to {COMMAND_UUID}")
 
                 # Keep the connection open to receive notifications
-                while True:
+                while client.is_connected:
                     await asyncio.sleep(1)
 
 if __name__ == "__main__":

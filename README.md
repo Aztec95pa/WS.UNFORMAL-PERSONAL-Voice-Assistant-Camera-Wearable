@@ -57,5 +57,18 @@ Solder components like so:
    - When first running the script it will probably take a while to download the VOSK model
    - To connect to the device, click on the window popup, press the "Select BLE Device" button, and wait for the device to show up (don't mind the UI 😅)
 
+## BLE image validation
+
+Photo notifications use the existing firmware protocol: a two-byte little-endian
+index, 1–493 JPEG payload bytes, then the exact two-byte `ff ff` end marker.
+The receiver retains at most 1 MiB for one image and discards malformed,
+out-of-order, or oversized transfers until a fresh packet 0 arrives. JPEGs must
+decode successfully, have dimensions no greater than 2048 on either side, and
+contain at most 2,000,000 pixels before they reach the model or image storage.
+Audio mode may pause a transfer indefinitely; no fixed assembly timeout is used.
+
+Run the offline regression checks with `python -m unittest discover -s tests -v`.
+
 ## Acknowledgements
+
 Thank you to [OpenGlass](https://github.com/BasedHardware/OpenGlass) for open-sourcing their code which helped me create the embedded software for the XIAO ESP32 S3.
